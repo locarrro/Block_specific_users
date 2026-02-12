@@ -39,6 +39,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.bilibili.com/*"],
+      "exclude_matches": ["*://www.bilibili.com/video/*"],
       "js": ["content.js"],
       "css": ["content.css"]
     }
