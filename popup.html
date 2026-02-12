@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Bilibili 黑名单读取器</title>
+  <style>
+    body {
+      width: 300px;
+      text-align: center;
+      font-family: sans-serif;
+    }
+    button {
+      width: 90%;
+      padding: 10px;
+      margin-top: 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      cursor: pointer;
+      background-color: #00a1d6;
+      color: white;
+      font-size: 14px;
+    }
+    button:hover {
+      background-color: #00b5e5;
+    }
+    #output {
+      margin-top: 15px;
+      text-align: left;
+      white-space: pre-wrap; /* 让长文本可以换行 */
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+      background-color: #f7f7f7;
+      padding: 5px;
+      border-radius: 3px;
+    }
+    .settings-area {
+      margin-top: 15px;
+      padding-top: 10px;
+      border-top: 1px solid #eee;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <h3>Bilibili 黑名单</h3>
+  <button id="fetchBlacklistBtn">读取黑名单列表</button>
+  <div id="output">请先登录B站，然后点击按钮...</div>
+  <div class="settings-area">
+    <label style="font-size: 12px; font-weight: bold;">关键词屏蔽 (匹配标题):</label>
+    <input type="text" id="keywordInput" placeholder="输入关键词" style="width: 65%; padding: 5px; margin-top: 5px;">
+    <button id="saveKeywordBtn" style="width: 25%; margin-top: 5px; padding: 6px; font-size: 12px;">保存</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

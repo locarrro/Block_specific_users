@@ -1,0 +1,16 @@
+# Mac system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE settings (如果你用 VS Code)
+.vscode/
+
+# Node modules (虽然你目前没用 npm，但预留着好)
+node_modules/
+
+# Chrome Extension metadata
+_metadata/
