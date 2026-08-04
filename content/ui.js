@@ -202,9 +202,9 @@ function setupHoverTrigger(element, type, id) {
 
 // --- Tooltip 内容构建（全部走 textContent，防止 B 站可控内容注入 HTML） ---
 
-// 清空 tooltip 并追加一个文本节点
+// 向 tooltip 追加一个文本节点（调用方负责预先清空；此函数只追加不清空，
+// 以支持连续追加多个内容块，如用户详情+词云）
 function setTooltipText(tooltip, text, className) {
-  tooltip.textContent = '';
   const div = document.createElement('div');
   if (className) div.className = className;
   div.textContent = text;
@@ -324,7 +324,7 @@ function showTooltip(targetElement, type, id) {
       tooltip.textContent = '';
       if (res.success) {
         const d = res.data;
-        const wc = d.wordCloud.map(w => `${w.word}`).join(' ');
+        const wc = (d.wordCloud || []).map(w => `${w.word}`).join(' ');
         setTooltipText(tooltip, `用户详情 (UID: ${d.uid})`, 'ext-tt-title');
         setTooltipText(tooltip, `视频数: ${d.videoCount} | 粉丝: ${d.follower}`);
         setTooltipText(tooltip, `平均时长: ${d.avgLength}`);

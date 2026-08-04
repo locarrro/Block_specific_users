@@ -439,10 +439,11 @@ async function apiGetWithWbi(url) {
 }
 
 // --- 简单 TTL 缓存（内存级，去重并发请求；失败结果不缓存） ---
-
-const cacheStore = new Map();
+// 注意：每个 cached() 实例持有独立缓存，避免不同 API 函数因参数相同而串 key
+// （如 fetchUserInfoCached('123') 与 checkBlockStatusCached('123') 曾共享 key）
 
 function cached(fn, ttlMs) {
+  const cacheStore = new Map();
   return function (...args) {
     const key = JSON.stringify(args);
     const hit = cacheStore.get(key);
