@@ -2,54 +2,144 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Bilibili 黑名单读取器</title>
+  <title>Bilibili 黑名单管理</title>
   <style>
     body {
-      width: 300px;
-      text-align: center;
+      width: 380px;
+      margin: 0;
+      padding: 12px;
       font-family: sans-serif;
     }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      text-align: center;
+    }
+    .row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .row button {
+      flex: 1;
+    }
     button {
-      width: 90%;
-      padding: 10px;
-      margin-top: 10px;
+      padding: 6px 8px;
       border: 1px solid #ccc;
-      border-radius: 5px;
+      border-radius: 4px;
       cursor: pointer;
       background-color: #00a1d6;
       color: white;
-      font-size: 14px;
+      font-size: 12px;
     }
     button:hover {
       background-color: #00b5e5;
     }
-    #output {
-      margin-top: 15px;
-      text-align: left;
-      white-space: pre-wrap; /* 让长文本可以换行 */
-      word-break: break-all;
-      max-height: 300px;
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background-color: #fff;
+      color: #00a1d6;
+    }
+    button.secondary:hover {
+      background-color: #eef8fd;
+    }
+    #searchInput {
+      flex: 1;
+      padding: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    #status {
+      font-size: 12px;
+      color: #666;
+      margin: 6px 0;
+      text-align: center;
+    }
+    #userList {
+      max-height: 320px;
       overflow-y: auto;
-      background-color: #f7f7f7;
-      padding: 5px;
-      border-radius: 3px;
+      border: 1px solid #eee;
+      border-radius: 4px;
+    }
+    .user-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 8px;
+      border-bottom: 1px solid #f2f2f2;
+      font-size: 12px;
+    }
+    .user-item:last-child {
+      border-bottom: none;
+    }
+    .user-item .uname {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .user-item .uid {
+      color: #999;
+      margin: 0 6px;
+    }
+    .user-item a {
+      color: #00a1d6;
+      text-decoration: none;
+      margin-right: 6px;
+    }
+    .user-item a:hover {
+      text-decoration: underline;
+    }
+    .user-item button {
+      flex: none;
+      padding: 2px 8px;
+      font-size: 11px;
     }
     .settings-area {
-      margin-top: 15px;
+      margin-top: 12px;
       padding-top: 10px;
       border-top: 1px solid #eee;
-      text-align: left;
+    }
+    .settings-area label {
+      font-size: 12px;
+      font-weight: bold;
+    }
+    #keywordInput {
+      flex: 1;
+      padding: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    input[type="file"] {
+      display: none;
     }
   </style>
 </head>
 <body>
-  <h3>Bilibili 黑名单</h3>
-  <button id="fetchBlacklistBtn">读取黑名单列表</button>
-  <div id="output">请先登录B站，然后点击按钮...</div>
+  <h3>Bilibili 黑名单管理</h3>
+  <div class="row">
+    <button id="fetchBlacklistBtn">读取黑名单</button>
+    <button id="exportBtn" class="secondary" disabled>导出 JSON</button>
+    <button id="importBtn" class="secondary" disabled>导入 JSON</button>
+    <input type="file" id="importFile" accept=".json,application/json">
+  </div>
+  <div class="row">
+    <input type="text" id="searchInput" placeholder="搜索用户名 / UID...">
+  </div>
+  <div id="status">请先登录B站，然后点击"读取黑名单"</div>
+  <div id="userList"></div>
   <div class="settings-area">
-    <label style="font-size: 12px; font-weight: bold;">关键词屏蔽 (匹配标题):</label>
-    <input type="text" id="keywordInput" placeholder="输入关键词" style="width: 65%; padding: 5px; margin-top: 5px;">
-    <button id="saveKeywordBtn" style="width: 25%; margin-top: 5px; padding: 6px; font-size: 12px;">保存</button>
+    <label>关键词屏蔽 (匹配标题):</label>
+    <div class="row">
+      <input type="text" id="keywordInput" placeholder="多个关键词用逗号分隔">
+      <button id="saveKeywordBtn" class="secondary" style="flex: none; width: auto;">保存</button>
+    </div>
   </div>
   <script src="popup.js"></script>
 </body>
