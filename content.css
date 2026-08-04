@@ -115,3 +115,25 @@
   background-color: #d9363e;
   transform: scale(1.05);
 }
+
+/* Toast 提示（替代 alert） */
+.ext-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  z-index: 100000;
+  max-width: 80%;
+  word-break: break-all;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.ext-toast-show {
+  opacity: 1;
+}

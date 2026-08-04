@@ -495,7 +495,7 @@ function highlightAndOverlay(card, apiUid = null, apiName = null) {
         card.style.display = 'none';
       } else {
         btn.innerText = '拉黑UP';
-        alert(response.message);
+        showToast(response.message);
       }
     });
   });
@@ -584,7 +584,7 @@ function createBlockButton(uid, bvid = null) {
         }
       } else {
         button.innerText = isBlocked ? '解除' : '拉黑'; // 恢复文字
-        alert(response.message);
+        showToast(response.message);
       }
     });
   });
@@ -625,6 +625,35 @@ function setupHoverTrigger(element, type, id) {
   });
 }
 
+// --- Tooltip 内容构建（全部走 textContent，防止 B 站可控内容注入 HTML） ---
+
+// 清空 tooltip 并追加一个文本节点
+function setTooltipText(tooltip, text, className) {
+  tooltip.textContent = '';
+  const div = document.createElement('div');
+  if (className) div.className = className;
+  div.textContent = text;
+  tooltip.appendChild(div);
+  return div;
+}
+
+// 轻量提示（替代 alert，避免阻塞页面且不被页面样式干扰）
+function showToast(message) {
+  let toast = document.getElementById('ext-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'ext-toast';
+    toast.className = 'ext-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('ext-toast-show');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => {
+    toast.classList.remove('ext-toast-show');
+  }, 2500);
+}
+
 function showTooltip(targetElement, type, id) {
   // 移除旧的
   const old = document.getElementById('ext-hover-tooltip');
@@ -632,7 +661,7 @@ function showTooltip(targetElement, type, id) {
 
   const tooltip = document.createElement('div');
   tooltip.id = 'ext-hover-tooltip';
-  tooltip.innerHTML = '<div class="ext-loading">加载中...</div>';
+  setTooltipText(tooltip, '加载中...', 'ext-loading');
 
   // 定位
   const rect = targetElement.getBoundingClientRect();
@@ -662,12 +691,14 @@ function showTooltip(targetElement, type, id) {
       tooltip.removeEventListener('click', handler);
 
       navigator.clipboard.writeText(id).then(() => {
-        const originalContent = tooltip.innerHTML;
-        tooltip.innerHTML = `<div class="ext-copied-message">UID 已复制!</div>`;
+        const originalChildren = Array.from(tooltip.childNodes);
+        tooltip.textContent = '';
+        setTooltipText(tooltip, 'UID 已复制!', 'ext-copied-message');
 
         setTimeout(() => {
           if (document.getElementById('ext-hover-tooltip')) {
-            tooltip.innerHTML = originalContent;
+            tooltip.textContent = '';
+            originalChildren.forEach(n => tooltip.appendChild(n));
             // Re-add the handler
             tooltip.addEventListener('click', handler);
           }
@@ -681,42 +712,46 @@ function showTooltip(targetElement, type, id) {
 
     fetchUserInfoCached(id).then(res => {
       if (!document.getElementById('ext-hover-tooltip')) return;
+      tooltip.textContent = '';
       if (res.success) {
         const d = res.data;
         const wc = d.wordCloud.map(w => `${w.word}`).join(' ');
-        tooltip.innerHTML = `
-          <div class="ext-tt-title">用户详情 (UID: ${d.uid})</div>
-          <div>视频数: ${d.videoCount} | 粉丝: ${d.follower}</div>
-          <div>平均时长: ${d.avgLength}</div>
-          <div class="ext-tt-cloud">词云: ${wc || '无'}</div>
-        `;
+        setTooltipText(tooltip, `用户详情 (UID: ${d.uid})`, 'ext-tt-title');
+        setTooltipText(tooltip, `视频数: ${d.videoCount} | 粉丝: ${d.follower}`);
+        setTooltipText(tooltip, `平均时长: ${d.avgLength}`);
+        setTooltipText(tooltip, `词云: ${wc || '无'}`, 'ext-tt-cloud');
       } else {
-        tooltip.innerHTML = `加载失败: ${res.error}`;
+        setTooltipText(tooltip, `加载失败: ${res.error}`);
       }
     });
   } else if (type === 'user-resolve') {
     // 新增：先通过 BVID 获取 UID，再显示用户信息
-    tooltip.innerHTML = '<div class="ext-loading">正在解析用户信息...</div>';
+    setTooltipText(tooltip, '正在解析用户信息...', 'ext-loading');
     fetchVideoInfoCached(id).then(res => {
       if (res.success && res.data.mid) {
         // 获取成功，转为普通的 user 类型显示
         showTooltip(targetElement, 'user', res.data.mid);
       } else {
-        tooltip.innerHTML = '无法获取用户信息';
+        setTooltipText(tooltip, '无法获取用户信息');
       }
     });
   } else if (type === 'video') {
     fetchVideoInfoCached(id).then(res => {
       if (!document.getElementById('ext-hover-tooltip')) return;
+      tooltip.textContent = '';
       if (res.success) {
         const d = res.data;
-        tooltip.innerHTML = `
-          <div class="ext-tt-title">视频详情</div>
-          <div class="ext-tt-tags">Tags: ${d.tags.slice(0, 8).join(', ')}...</div>
-          <div class="ext-tt-ai"><strong>AI总结:</strong> ${d.aiSummary || '暂无'}</div>
-        `;
+        setTooltipText(tooltip, '视频详情', 'ext-tt-title');
+        setTooltipText(tooltip, `Tags: ${d.tags.slice(0, 8).join(', ')}...`, 'ext-tt-tags');
+        const aiDiv = document.createElement('div');
+        aiDiv.className = 'ext-tt-ai';
+        const strong = document.createElement('strong');
+        strong.textContent = 'AI总结: ';
+        aiDiv.appendChild(strong);
+        aiDiv.appendChild(document.createTextNode(d.aiSummary || '暂无'));
+        tooltip.appendChild(aiDiv);
       } else {
-        tooltip.innerHTML = `加载失败: ${res.error}`;
+        setTooltipText(tooltip, `加载失败: ${res.error}`);
       }
     });
   }
