@@ -37,6 +37,18 @@ function updateKeywords(keywordString) {
     .filter(k => k.length > 0);
 }
 
+// 从顶栏用户入口读取当前登录用户 mid（找到即缓存；未找到不缓存以便后续重试）
+let cachedMyMid = null;
+function getMyMid() {
+  if (cachedMyMid) return cachedMyMid;
+  const link = document.querySelector('.bili-header a[href*="space.bilibili.com"], .v-header a[href*="space.bilibili.com"]');
+  if (link) {
+    const match = link.href.match(/space\.bilibili\.com\/(\d+)/);
+    if (match) cachedMyMid = match[1];
+  }
+  return cachedMyMid || null;
+}
+
 // MutationObserver 节流：收集新增元素节点，用 requestAnimationFrame 批量处理，
 // 避免高频滚动加载时对每个节点立即执行全量扫描
 let pendingNodes = [];
@@ -88,7 +100,7 @@ window.addEventListener('load', () => {
 function findAndProcessUsernames(container) {
   // 查找指向用户空间的链接，这是最可靠的方式
   // 扩展选择器：覆盖热门/排行榜 (.up-name a), 动态 (.bili-dyn-card-user__name) 等特定结构
-  const selector = 'a[href*="space.bilibili.com"], .up-name a, .bili-dyn-card-user__name, .user-name a, .up-name__text, .bili-dyn-title__text';
+  const selector = 'a[href*="space.bilibili.com"], a[href*="live.bilibili.com"], .up-name a, .bili-dyn-card-user__name, .user-name a, .up-name__text, .bili-dyn-title__text';
   let userLinks = container.querySelectorAll ? Array.from(container.querySelectorAll(selector)) : [];
 
   // 修复：如果 container 本身就是目标链接 (MutationObserver 可能会直接传入该节点)
@@ -101,14 +113,18 @@ function findAndProcessUsernames(container) {
     if (link.dataset.blockButtonAdded) return;
     link.dataset.blockButtonAdded = 'true';
 
-    // 排除顶栏区域 (防止对自己账号进行操作)
-    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header')) return;
+    // 排除顶栏/动态页左侧本人卡片区域 (防止对自己账号进行操作)
+    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header, .bili-dyn-sidebar__user')) return;
+
+    // 排除"关注/粉丝/动态"统计链接（href 带子路径，非用户名）
+    if (link.href && /space\.bilibili\.com\/\d+\/[\w-]+/.test(link.href)) return;
 
     // 优化：只在有文字内容的链接（用户名）旁显示按钮，忽略纯头像链接
     if (!link.textContent.trim()) return;
 
     let uid = null;
     let bvid = null;
+    let roomId = null;
 
     // 1. 尝试从 href 中提取 UID (常规情况)
     if (link.href && link.href.includes('space.bilibili.com')) {
@@ -128,10 +144,20 @@ function findAndProcessUsernames(container) {
       }
     }
 
-    // 3. 根据获取到的信息渲染按钮
-    if (uid || bvid) {
+    // 3. 直播区链接 (live.bilibili.com/房间号)，通过 API 解析主播 uid
+    if (!uid && !bvid && link.href && link.href.includes('live.bilibili.com')) {
+      const match = link.href.match(/live\.bilibili\.com\/(\d+)/);
+      if (match) roomId = match[1];
+    }
+
+    // 排除当前登录用户本人的链接（从顶栏用户入口读取 mid 作兜底）
+    const myMid = getMyMid();
+    if (myMid && uid === myMid) return;
+
+    // 4. 根据获取到的信息渲染按钮
+    if (uid || bvid || roomId) {
       // 如果有 UID 直接创建，如果没有 UID 但有 BVID，则创建“延迟加载”按钮
-      const button = createBlockButton(uid, bvid);
+      const button = createBlockButton(uid, bvid, roomId);
 
       // 将按钮插入到链接元素的旁边
       link.insertAdjacentElement('afterend', button);
@@ -149,8 +175,12 @@ function findAndProcessUsernames(container) {
         }
       }
 
-      // 添加悬停 3 秒显示用户信息功能
-      setupHoverTrigger(link, uid ? 'user' : 'user-resolve', uid || bvid);
+      // 添加悬停显示用户信息功能（直播区无 space 链接，不挂悬停）
+      if (uid) {
+        setupHoverTrigger(link, 'user', uid);
+      } else if (bvid) {
+        setupHoverTrigger(link, 'user-resolve', bvid);
+      }
     }
   });
 }

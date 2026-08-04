@@ -61,7 +61,7 @@ function highlightAndOverlay(card, apiUid = null, apiName = null) {
 }
 
 // 创建“拉黑”按钮
-function createBlockButton(uid, bvid = null) {
+function createBlockButton(uid, bvid = null, roomId = null) {
   const button = document.createElement('button');
   button.innerText = '...'; // 加载状态
   button.className = 'ext-block-button';
@@ -75,6 +75,18 @@ function createBlockButton(uid, bvid = null) {
       fetchVideoInfoCached(bvid).then(res => {
         if (res && res.success && res.data.mid) {
           uid = res.data.mid;
+          button.dataset.uid = uid;
+          checkStatus(); // 获取到 UID 后再检查状态
+        } else {
+          button.innerText = '?';
+          button.title = '无法获取用户信息';
+        }
+      });
+    } else if (!uid && roomId) {
+      // 直播区：通过房间号解析主播 uid
+      fetchRoomOwnerCached(roomId).then(res => {
+        if (res && res.success && res.uid) {
+          uid = res.uid;
           button.dataset.uid = uid;
           checkStatus(); // 获取到 UID 后再检查状态
         } else {

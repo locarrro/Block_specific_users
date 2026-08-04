@@ -146,6 +146,15 @@ async function checkBlockStatus(uid) {
   }
 }
 
+// 通过房间号获取主播 uid（直播区拉黑按钮用）
+async function fetchRoomOwner(roomId) {
+  const data = await apiGet(`https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}`);
+  if (data.code === 0 && data.data && data.data.uid) {
+    return { success: true, uid: String(data.data.uid) };
+  }
+  return { success: false, error: data.message || '无法获取主播信息' };
+}
+
 // --- 辅助函数 ---
 
 // 格式化时长（秒 -> MM:SS）
@@ -425,3 +434,4 @@ function cached(fn, ttlMs) {
 const fetchUserInfoCached = cached(fetchUserInfo, 10 * 60 * 1000);
 const fetchVideoInfoCached = cached(fetchVideoInfo, 10 * 60 * 1000);
 const checkBlockStatusCached = cached(checkBlockStatus, 60 * 1000);
+const fetchRoomOwnerCached = cached(fetchRoomOwner, 10 * 60 * 1000);
