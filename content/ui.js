@@ -5,10 +5,19 @@
 
 let hideTooltipTimer = null; // For managing tooltip hide delay
 
-// 执行拉黑/解除并统一错误提示（两套拉黑按钮共用的写操作入口）
-async function modifyAndNotify(uid, action) {
+// 执行拉黑/解除并统一提示（两套拉黑按钮共用的写操作入口）
+// action: 5=拉黑 6=解除；拉黑成功时 toast 附带“撤销”按钮，防误拉黑
+async function modifyAndNotify(uid, action, userName = '') {
   const response = await modifyRelation(uid, action);
-  if (!response.success) showToast(response.message);
+  if (!response.success) {
+    showToast(response.message);
+    return response;
+  }
+  if (action === 5) {
+    showToastWithUndo(`已拉黑${userName ? '「' + userName + '」' : '该用户'}`, uid);
+  } else {
+    showToast('已解除拉黑');
+  }
   return response;
 }
 
@@ -204,7 +213,8 @@ function setTooltipText(tooltip, text, className) {
 }
 
 // 轻量提示（替代 alert，避免阻塞页面且不被页面样式干扰）
-function showToast(message) {
+// extra 为可选附加节点（如“撤销”按钮）；带按钮时 toast 存活时间相应延长
+function showToast(message, extra = null) {
   let toast = document.getElementById('ext-toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -212,12 +222,45 @@ function showToast(message) {
     toast.className = 'ext-toast';
     document.body.appendChild(toast);
   }
-  toast.textContent = message;
+  while (toast.firstChild) toast.removeChild(toast.firstChild);
+  toast.appendChild(document.createTextNode(message));
+  if (extra) toast.appendChild(extra);
   toast.classList.add('ext-toast-show');
   clearTimeout(showToast._timer);
   showToast._timer = setTimeout(() => {
     toast.classList.remove('ext-toast-show');
-  }, 2500);
+  }, extra ? 6000 : 2500);
+}
+
+// 拉黑成功提示 + “撤销”按钮（误拉黑一键恢复）
+function showToastWithUndo(message, uid) {
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'ext-toast-undo';
+  undoBtn.textContent = '撤销';
+  undoBtn.addEventListener('click', async () => {
+    undoBtn.disabled = true;
+    undoBtn.textContent = '...';
+    const res = await modifyRelation(uid, 6);
+    if (res.success) {
+      refreshBlockButtons(uid);
+      showToast('已撤销拉黑');
+    } else {
+      undoBtn.disabled = false;
+      undoBtn.textContent = '撤销';
+      showToast('撤销失败：' + res.message);
+    }
+  });
+  showToast(message, undoBtn);
+}
+
+// 将页面上某 uid 的所有按钮恢复为“未拉黑”状态（撤销后同步 UI）
+function refreshBlockButtons(uid) {
+  document.querySelectorAll(`.ext-block-button[data-uid="${uid}"]`).forEach(btn => {
+    btn.dataset.blocked = 'false';
+    btn.classList.remove('ext-blocked');
+    btn.textContent = '拉黑';
+  });
 }
 
 function showTooltip(targetElement, type, id) {
