@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bilibili 黑名单增强助手",
-  "version": "2.0",
+  "version": "2.1.0",
   "description": "读取黑名单，并在页面上提供快速拉黑和用户信息分析功能。",
   "icons": {
     "16": "images/icon16.png",

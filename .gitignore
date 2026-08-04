@@ -14,3 +14,11 @@ node_modules/
 
 # Chrome Extension metadata
 _metadata/
+
+# 宿主工具本地文件（Reasonix / CodeGraph），不提交
+.reasonix/
+.codegraph/
+reasonix.toml
+
+# 日志
+*.log
