@@ -23,31 +23,30 @@ async function apiGet(url) {
 
 // 获取用户详细信息（粉丝数、视频数、平均时长、词云）
 async function fetchUserInfo(uid) {
-  const [stats, navnum, videos] = await Promise.all([
+  const [stats, navnum] = await Promise.all([
     apiGet(`https://api.bilibili.com/x/relation/stat?vmid=${uid}`),
-    apiGet(`https://api.bilibili.com/x/space/navnum?mid=${uid}`),
-    apiGetWithWbi(`https://api.bilibili.com/x/space/arc/search?mid=${uid}&ps=50&pn=1`)
+    apiGet(`https://api.bilibili.com/x/space/navnum?mid=${uid}`)
   ]);
 
   if (!stats || stats.code !== 0) {
     return { success: false, error: `Stats API error: ${stats?.message} (code: ${stats?.code})` };
   }
 
-  // 处理视频数量
+  // 视频列表：翻页拉全量（串行避免并发 wbi 签名请求触发风控），词云更有代表性
+  const videoList = await fetchVideosByMid(uid);
+
+  // 处理视频数量（navnum 失败时用全量列表长度兜底，比单页 count 更准）
   let videoCount = 0;
   if (navnum && navnum.code === 0 && navnum.data) {
     videoCount = navnum.data.video || 0;
   }
+  if (videoCount === 0 && videoList.length) videoCount = videoList.length;
 
   let avgLengthStr = 'N/A';
   let wordCloud = [];
 
   // 处理视频列表
-  if (videos && videos.code === 0 && videos.data && videos.data.list) {
-    const videoList = videos.data.list.vlist || [];
-    // 如果 navnum 失败但 search 成功，可以用 search 的 count
-    if (videoCount === 0 && videos.data.page) videoCount = videos.data.page.count;
-
+  if (videoList.length) {
     // 计算平均视频时长
     const totalLength = videoList.reduce((sum, video) => sum + video.length, 0);
     const avgLength = videoList.length > 0 ? Math.round(totalLength / videoList.length) : 0;
@@ -171,6 +170,20 @@ async function searchUidByName(name) {
     if (hit) return { success: true, uid: String(hit.mid) };
   }
   return { success: false, error: data.message || '未找到该用户' };
+}
+
+// 翻页拉取用户投稿全量（参照 BiliScope：第一页读 page.count 后按需翻页；
+// 设页数上限防风控，词云代表性随页数提升，高产量 UP 主不再只取最近 50 条）
+async function fetchVideosByMid(mid, maxPages = 8) {
+  const all = [];
+  for (let pn = 1; pn <= maxPages; pn++) {
+    const data = await apiGetWithWbi(`https://api.bilibili.com/x/space/arc/search?mid=${mid}&ps=50&pn=${pn}`);
+    if (data.code !== 0 || !data.data || !data.data.list || !data.data.list.vlist) break;
+    all.push(...data.data.list.vlist);
+    const pageInfo = data.data.page;
+    if (!pageInfo || all.length >= pageInfo.count || pn >= pageInfo.pn_max) break;
+  }
+  return all;
 }
 
 // 通过房间号获取主播 uid（直播区拉黑按钮用）
