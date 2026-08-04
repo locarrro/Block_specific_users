@@ -18,10 +18,8 @@
   },
   "permissions": [
     "activeTab",
-    "cookies",
     "storage",
-    "declarativeNetRequest",
-    "scripting"
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "*://*.bilibili.com/*"

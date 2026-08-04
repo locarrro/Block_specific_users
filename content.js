@@ -1,4 +1,183 @@
-// d:\project\user.js\Block_specific_users\content.js
+// ============================================================
+// Bilibili 黑名单增强助手 - content script
+// 运行于 B 站页面上下文（isolated world），所有 B 站 API 请求
+// 在此直连：请求自带页面 origin 与登录 cookie，不再依赖
+// background 的 executeScript 注入，也无需打开额外标签页。
+// ============================================================
+
+// --- B 站 API 直连封装 ---
+
+// 从页面 cookie 读取 CSRF token（bili_jct 非 HttpOnly）
+function getCsrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]*)/);
+  return match ? match[1] : null;
+}
+
+// 带登录态的 GET 请求，返回解析后的 JSON；失败返回 { code, message }
+async function apiGet(url) {
+  try {
+    const res = await fetch(url, { credentials: 'include' });
+    if (res.ok) return await res.json();
+    return { code: res.status, message: res.statusText };
+  } catch (e) {
+    return { code: -999, message: e.message || 'Network Error' };
+  }
+}
+
+// 获取用户详细信息（粉丝数、视频数、平均时长、词云）
+async function fetchUserInfo(uid) {
+  const [stats, navnum, videos] = await Promise.all([
+    apiGet(`https://api.bilibili.com/x/relation/stat?vmid=${uid}`),
+    apiGet(`https://api.bilibili.com/x/space/navnum?mid=${uid}`),
+    apiGet(`https://api.bilibili.com/x/space/arc/search?mid=${uid}&ps=50&pn=1`)
+  ]);
+
+  if (!stats || stats.code !== 0) {
+    return { success: false, error: `Stats API error: ${stats?.message} (code: ${stats?.code})` };
+  }
+
+  // 处理视频数量
+  let videoCount = 0;
+  if (navnum && navnum.code === 0 && navnum.data) {
+    videoCount = navnum.data.video || 0;
+  }
+
+  let avgLengthStr = 'N/A';
+  let wordCloud = [];
+
+  // 处理视频列表
+  if (videos && videos.code === 0 && videos.data && videos.data.list) {
+    const videoList = videos.data.list.vlist || [];
+    // 如果 navnum 失败但 search 成功，可以用 search 的 count
+    if (videoCount === 0 && videos.data.page) videoCount = videos.data.page.count;
+
+    // 计算平均视频时长
+    const totalLength = videoList.reduce((sum, video) => sum + video.length, 0);
+    const avgLength = videoList.length > 0 ? Math.round(totalLength / videoList.length) : 0;
+    avgLengthStr = formatDuration(avgLength);
+
+    // 生成词云数据
+    const allText = videoList.map(v => `${v.title} ${v.description} ${v.tname}`).join(' ');
+    wordCloud = generateWordCloud(allText).slice(0, 15);
+  }
+
+  return {
+    success: true,
+    data: {
+      uid: uid,
+      follower: stats.data.follower,
+      videoCount: videoCount,
+      avgLength: avgLengthStr,
+      wordCloud: wordCloud
+    }
+  };
+}
+
+// 获取视频详情（Tags + AI 总结）
+async function fetchVideoInfo(bvid) {
+  try {
+    // 使用 detail 接口可以同时获取 View 和 Tags
+    const detailData = await apiGet(`https://api.bilibili.com/x/web-interface/view/detail?bvid=${bvid}`);
+    if (detailData.code !== 0) throw new Error(detailData.message);
+
+    const tags = detailData.data.Tags ? detailData.data.Tags.map(t => t.tag_name) : [];
+    const cid = detailData.data.View.cid;
+    const up_mid = detailData.data.View.owner.mid;
+    const up_name = detailData.data.View.owner.name;
+
+    let aiSummary = '';
+    try {
+      // 尝试获取 AI 总结
+      const aiData = await apiGet(`https://api.bilibili.com/x/web-interface/view/conclusion/get?bvid=${bvid}&cid=${cid}&up_mid=${up_mid}`);
+      if (aiData.code === 0 && aiData.data.model_result) {
+        aiSummary = aiData.data.model_result.summary;
+      }
+    } catch (e) {
+      // AI 总结可能不存在，忽略错误
+    }
+
+    return { success: true, data: { tags, aiSummary, mid: up_mid, name: up_name } };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// 修改关注关系（act=5 拉黑, act=6 解除）
+async function modifyRelation(uid, action) {
+  const csrf = getCsrfToken();
+  if (!csrf) {
+    return { success: false, message: '获取 CSRF token 失败，请确保已登录。' };
+  }
+
+  try {
+    const body = new URLSearchParams();
+    body.append('fid', uid);
+    body.append('act', action);
+    body.append('re_src', '11');
+    body.append('csrf', csrf);
+
+    const res = await fetch('https://api.bilibili.com/x/relation/modify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+      credentials: 'include'
+    });
+    const data = await res.json();
+    if (data.code === 0) {
+      return { success: true, message: '操作成功！' };
+    } else {
+      return { success: false, message: data.message || '操作失败' };
+    }
+  } catch (error) {
+    return { success: false, message: `请求失败: ${error.message}` };
+  }
+}
+
+// 检查用户拉黑状态（attribute=128 表示已拉黑）
+async function checkBlockStatus(uid) {
+  try {
+    const data = await apiGet(`https://api.bilibili.com/x/relation/stat?vmid=${uid}`);
+    if (data.code === 0 && data.data) {
+      // According to Bilibili API, attribute=128 means the user is in the blacklist.
+      return { success: true, isBlocked: data.data.attribute === 128 };
+    } else {
+      // 接口失败（如账号注销）时无法确定，默认视为未拉黑
+      return { success: true, isBlocked: false, error: data.message };
+    }
+  } catch (error) {
+    return { success: false, error: `请求失败: ${error.message}` };
+  }
+}
+
+// --- 辅助函数 ---
+
+// 格式化时长（秒 -> MM:SS）
+function formatDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// 简单的词云生成逻辑
+function generateWordCloud(text) {
+  const stopWords = new Set(['的', '了', '是', '在', '我', '你', '他', '她', '们', '一个', '这个', '那个', '和', '与', '或', '但', '也', '都', '就', '【', '】', '|', '-', 'bilibili', '哔哩哔哩']);
+  const wordCounts = {};
+
+  // 使用正则表达式匹配中文字符和字母数字
+  const words = text.match(/[\u4e00-\u9fa5a-zA-Z0-9]+/g) || [];
+
+  words.forEach(word => {
+    if (word.length > 1 && !stopWords.has(word.toLowerCase())) {
+      wordCounts[word] = (wordCounts[word] || 0) + 1;
+    }
+  });
+
+  return Object.entries(wordCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(entry => ({ word: entry[0], count: entry[1] }));
+}
+
+// --- 全局状态 ---
 
 // 全局变量存储关键词
 let targetKeywords = [];
@@ -111,10 +290,10 @@ function findAndProcessUsernames(container) {
     if (uid || bvid) {
       // 如果有 UID 直接创建，如果没有 UID 但有 BVID，则创建“延迟加载”按钮
       const button = createBlockButton(uid, bvid);
-      
+
       // 将按钮插入到链接元素的旁边
       link.insertAdjacentElement('afterend', button);
-      
+
       // 样式修复：针对热门/排行榜等页面，父容器可能有 overflow: hidden 导致按钮不可见
       const parent = link.parentElement;
       if (parent) {
@@ -162,7 +341,7 @@ function findAndProcessVideoCards(container) {
       const match = link.href.match(/\/video\/(BV\w+)/);
       if (match) bvid = match[1];
     }
-    
+
     // --- 1. 关键词屏蔽逻辑 (标题 + Tags) ---
     if (!card.dataset.keywordProcessed && targetKeywords.length > 0) {
       let isBlocked = false;
@@ -196,30 +375,25 @@ function findAndProcessVideoCards(container) {
       // 1b. 发起异步请求 (获取 Tags 或 UID)
       if (needFetchInfo && bvid && !card.dataset.tagCheckInitiated) {
         card.dataset.tagCheckInitiated = 'true';
-        try {
-          chrome.runtime.sendMessage({ type: 'getVideoInfo', bvid }, (res) => {
-            if (chrome.runtime.lastError) return; // 防止异步回调报错
-            if (!card.isConnected || card.dataset.keywordProcessed) return;
+        fetchVideoInfo(bvid).then(res => {
+          if (!card.isConnected || card.dataset.keywordProcessed) return;
 
-            if (res && res.success) {
-              const data = res.data;
-              // 检查 Tags 是否匹配
-              const tagMatched = data.tags && targetKeywords.some(keyword =>
-                data.tags.some(tag => tag.includes(keyword))
-              );
+          if (res && res.success) {
+            const data = res.data;
+            // 检查 Tags 是否匹配
+            const tagMatched = data.tags && targetKeywords.some(keyword =>
+              data.tags.some(tag => tag.includes(keyword))
+            );
 
-              // 如果 (标题已匹配) 或 (Tags 匹配)，则执行屏蔽
-              // 注意：如果标题已匹配(isBlocked=true)，我们进入这里是为了获取 data.mid
-              if (isBlocked || tagMatched) {
-                card.dataset.keywordProcessed = 'true';
-                // 传入 API 返回的 mid 和 name，解决页面无链接的问题
-                highlightAndOverlay(card, data.mid, data.name);
-              }
+            // 如果 (标题已匹配) 或 (Tags 匹配)，则执行屏蔽
+            // 注意：如果标题已匹配(isBlocked=true)，我们进入这里是为了获取 data.mid
+            if (isBlocked || tagMatched) {
+              card.dataset.keywordProcessed = 'true';
+              // 传入 API 返回的 mid 和 name，解决页面无链接的问题
+              highlightAndOverlay(card, data.mid, data.name);
             }
-          });
-        } catch (e) {
-          // 插件上下文已失效，忽略错误
-        }
+          }
+        });
       }
     }
 
@@ -243,7 +417,7 @@ function findAndProcessVideoCards(container) {
 
 function highlightAndOverlay(card, apiUid = null, apiName = null) {
   let uid = apiUid;
-  
+
   // 如果没有提供 API UID，尝试从 DOM 中提取
   if (!uid) {
     const userLink = card.querySelector('a[href*="space.bilibili.com"]');
@@ -257,7 +431,7 @@ function highlightAndOverlay(card, apiUid = null, apiName = null) {
 
   // 1. 高亮样式
   card.classList.add('ext-keyword-highlight');
-  
+
   // 创建一个独立的 div 作为边框层，以获得最高兼容性
   const borderDiv = document.createElement('div');
   borderDiv.className = 'ext-highlight-border';
@@ -273,9 +447,9 @@ function highlightAndOverlay(card, apiUid = null, apiName = null) {
   btn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     btn.innerText = '...';
-    chrome.runtime.sendMessage({ type: 'modifyRelation', uid, action: 5 }, response => {
+    modifyRelation(uid, 5).then(response => {
       if (response.success) {
         // 拉黑成功后，隐藏卡片
         card.style.display = 'none';
@@ -302,21 +476,16 @@ function createBlockButton(uid, bvid = null) {
   const init = () => {
     // 如果没有 UID 但有 BVID，先请求 API 获取 UID
     if (!uid && bvid) {
-      try {
-        chrome.runtime.sendMessage({ type: 'getVideoInfo', bvid }, (res) => {
-          if (chrome.runtime.lastError) return;
-          if (res && res.success && res.data.mid) {
-            uid = res.data.mid;
-            button.dataset.uid = uid;
-            checkStatus(); // 获取到 UID 后再检查状态
-          } else {
-            button.innerText = '?';
-            button.title = '无法获取用户信息';
-          }
-        });
-      } catch (e) {
-        // 插件上下文已失效
-      }
+      fetchVideoInfo(bvid).then(res => {
+        if (res && res.success && res.data.mid) {
+          uid = res.data.mid;
+          button.dataset.uid = uid;
+          checkStatus(); // 获取到 UID 后再检查状态
+        } else {
+          button.innerText = '?';
+          button.title = '无法获取用户信息';
+        }
+      });
     } else if (uid) {
       checkStatus();
     }
@@ -324,11 +493,9 @@ function createBlockButton(uid, bvid = null) {
 
   // 按需检查状态
   const checkStatus = () => {
-    try {
-      chrome.runtime.sendMessage({ type: 'checkBlockStatus', uid }, response => {
-      if (chrome.runtime.lastError) return;
+    checkBlockStatus(uid).then(response => {
       if (!button.isConnected) return; // 按钮可能已从 DOM 中移除
-      
+
       button.disabled = false;
       if (response && response.success) {
         const isBlocked = response.isBlocked;
@@ -343,19 +510,16 @@ function createBlockButton(uid, bvid = null) {
         button.dataset.blocked = 'false';
         button.title = '状态检查失败';
       }
-      });
-    } catch (e) {
-      // 插件上下文已失效
-    }
+    });
   };
 
   // 启动初始化
   init();
 
-  button.addEventListener('click', async (e) => {
+  button.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     if (!uid) return; // 防御性编程
 
     const isBlocked = button.dataset.blocked === 'true';
@@ -365,7 +529,7 @@ function createBlockButton(uid, bvid = null) {
     button.innerText = '...';
     button.disabled = true;
 
-    chrome.runtime.sendMessage({ type: 'modifyRelation', uid, action }, response => {
+    modifyRelation(uid, action).then(response => {
       button.disabled = false;
       if (response.success) {
         // 切换状态
@@ -391,7 +555,7 @@ function createBlockButton(uid, bvid = null) {
 
 function setupHoverTrigger(element, type, id) {
   let hoverTimer = null;
-  
+
   element.addEventListener('mouseenter', () => {
     // 如果元素所在的卡片已被屏蔽/高亮，则不显示悬浮窗，避免干扰和不必要的请求
     if (element.closest('.ext-keyword-highlight')) return;
@@ -429,12 +593,12 @@ function showTooltip(targetElement, type, id) {
   const tooltip = document.createElement('div');
   tooltip.id = 'ext-hover-tooltip';
   tooltip.innerHTML = '<div class="ext-loading">加载中...</div>';
-  
+
   // 定位
   const rect = targetElement.getBoundingClientRect();
   tooltip.style.top = `${window.scrollY + rect.bottom + 10}px`;
   tooltip.style.left = `${window.scrollX + rect.left}px`;
-  
+
   // Allow tooltip to be interactive
   tooltip.addEventListener('mouseenter', () => {
     if (hideTooltipTimer) {
@@ -460,7 +624,7 @@ function showTooltip(targetElement, type, id) {
       navigator.clipboard.writeText(id).then(() => {
         const originalContent = tooltip.innerHTML;
         tooltip.innerHTML = `<div class="ext-copied-message">UID 已复制!</div>`;
-        
+
         setTimeout(() => {
           if (document.getElementById('ext-hover-tooltip')) {
             tooltip.innerHTML = originalContent;
@@ -475,65 +639,45 @@ function showTooltip(targetElement, type, id) {
       });
     });
 
-    try {
-      chrome.runtime.sendMessage({ type: 'getUserInfo', uid: id }, (res) => {
-        if (chrome.runtime.lastError) {
-          tooltip.innerHTML = '连接断开，请刷新页面';
-          return;
-        }
-        if (!document.getElementById('ext-hover-tooltip')) return;
-        if (res.success) {
-          const d = res.data;
-          const wc = d.wordCloud.map(w => `${w.word}`).join(' ');
-          tooltip.innerHTML = `
-            <div class="ext-tt-title">用户详情 (UID: ${d.uid})</div>
-            <div>视频数: ${d.videoCount} | 粉丝: ${d.follower}</div>
-            <div>平均时长: ${d.avgLength}</div>
-            <div class="ext-tt-cloud">词云: ${wc || '无'}</div>
-          `;
-        } else {
-          tooltip.innerHTML = `加载失败: ${res.error}`;
-        }
-      });
-    } catch (e) {
-      tooltip.innerHTML = '插件已更新，请刷新页面';
-    }
+    fetchUserInfo(id).then(res => {
+      if (!document.getElementById('ext-hover-tooltip')) return;
+      if (res.success) {
+        const d = res.data;
+        const wc = d.wordCloud.map(w => `${w.word}`).join(' ');
+        tooltip.innerHTML = `
+          <div class="ext-tt-title">用户详情 (UID: ${d.uid})</div>
+          <div>视频数: ${d.videoCount} | 粉丝: ${d.follower}</div>
+          <div>平均时长: ${d.avgLength}</div>
+          <div class="ext-tt-cloud">词云: ${wc || '无'}</div>
+        `;
+      } else {
+        tooltip.innerHTML = `加载失败: ${res.error}`;
+      }
+    });
   } else if (type === 'user-resolve') {
     // 新增：先通过 BVID 获取 UID，再显示用户信息
     tooltip.innerHTML = '<div class="ext-loading">正在解析用户信息...</div>';
-    try {
-      chrome.runtime.sendMessage({ type: 'getVideoInfo', bvid: id }, (res) => {
-        if (res.success && res.data.mid) {
-          // 获取成功，转为普通的 user 类型显示
-          showTooltip(targetElement, 'user', res.data.mid);
-        } else {
-          tooltip.innerHTML = '无法获取用户信息';
-        }
-      });
-    } catch (e) {
-      tooltip.innerHTML = '插件已更新，请刷新页面';
-    }
+    fetchVideoInfo(id).then(res => {
+      if (res.success && res.data.mid) {
+        // 获取成功，转为普通的 user 类型显示
+        showTooltip(targetElement, 'user', res.data.mid);
+      } else {
+        tooltip.innerHTML = '无法获取用户信息';
+      }
+    });
   } else if (type === 'video') {
-    try {
-      chrome.runtime.sendMessage({ type: 'getVideoInfo', bvid: id }, (res) => {
-        if (chrome.runtime.lastError) {
-          tooltip.innerHTML = '连接断开，请刷新页面';
-          return;
-        }
-        if (!document.getElementById('ext-hover-tooltip')) return;
-        if (res.success) {
-          const d = res.data;
-          tooltip.innerHTML = `
-            <div class="ext-tt-title">视频详情</div>
-            <div class="ext-tt-tags">Tags: ${d.tags.slice(0, 8).join(', ')}...</div>
-            <div class="ext-tt-ai"><strong>AI总结:</strong> ${d.aiSummary || '暂无'}</div>
-          `;
-        } else {
-          tooltip.innerHTML = `加载失败: ${res.error}`;
-        }
-      });
-    } catch (e) {
-      tooltip.innerHTML = '插件已更新，请刷新页面';
-    }
+    fetchVideoInfo(id).then(res => {
+      if (!document.getElementById('ext-hover-tooltip')) return;
+      if (res.success) {
+        const d = res.data;
+        tooltip.innerHTML = `
+          <div class="ext-tt-title">视频详情</div>
+          <div class="ext-tt-tags">Tags: ${d.tags.slice(0, 8).join(', ')}...</div>
+          <div class="ext-tt-ai"><strong>AI总结:</strong> ${d.aiSummary || '暂无'}</div>
+        `;
+      } else {
+        tooltip.innerHTML = `加载失败: ${res.error}`;
+      }
+    });
   }
 }
