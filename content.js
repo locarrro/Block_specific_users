@@ -183,8 +183,9 @@ function findAndProcessUsernames(container) {
     if (link.dataset.blockButtonAdded) return;
     link.dataset.blockButtonAdded = 'true';
 
-    // 排除顶栏/动态页左侧本人卡片区域 (防止对自己账号进行操作)
-    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header, .bili-dyn-sidebar__user')) return;
+    // 排除顶栏/动态页左侧本人卡片区域 (防止对自己账号进行操作)，
+    // 以及直播间"我的关注"面板（Vue 列表窄容器内插按钮会渲染异常）
+    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header, .bili-dyn-sidebar__user, [class*="my-follow"]')) return;
 
     // 排除"关注/粉丝/动态"统计链接（href 带子路径，非用户名）
     if (link.href && /space\.bilibili\.com\/\d+\/[\w-]+/.test(link.href)) return;
