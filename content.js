@@ -177,6 +177,31 @@ function generateWordCloud(text) {
     .map(entry => ({ word: entry[0], count: entry[1] }));
 }
 
+// --- 简单 TTL 缓存（内存级，去重并发请求；失败结果不缓存） ---
+
+const cacheStore = new Map();
+
+function cached(fn, ttlMs) {
+  return function (...args) {
+    const key = JSON.stringify(args);
+    const hit = cacheStore.get(key);
+    if (hit && Date.now() - hit.ts < ttlMs) return hit.promise;
+
+    const promise = fn.apply(this, args).then(result => {
+      // 失败/未登录等结果不缓存，允许后续重试
+      if (!result || result.success === false) cacheStore.delete(key);
+      return result;
+    });
+    cacheStore.set(key, { ts: Date.now(), promise });
+    return promise;
+  };
+}
+
+// 用户信息 10 分钟、视频信息 10 分钟、拉黑状态 60 秒
+const fetchUserInfoCached = cached(fetchUserInfo, 10 * 60 * 1000);
+const fetchVideoInfoCached = cached(fetchVideoInfo, 10 * 60 * 1000);
+const checkBlockStatusCached = cached(checkBlockStatus, 60 * 1000);
+
 // --- 全局状态 ---
 
 // 全局变量存储关键词
@@ -210,18 +235,33 @@ function updateKeywords(keywordString) {
     .filter(k => k.length > 0);
 }
 
+// MutationObserver 节流：收集新增元素节点，用 requestAnimationFrame 批量处理，
+// 避免高频滚动加载时对每个节点立即执行全量扫描
+let pendingNodes = [];
+let processScheduled = false;
+
+function scheduleProcessing(nodes) {
+  for (const node of nodes) {
+    if (node.nodeType === Node.ELEMENT_NODE) pendingNodes.push(node);
+  }
+  if (processScheduled) return;
+  processScheduled = true;
+  requestAnimationFrame(() => {
+    processScheduled = false;
+    const batch = pendingNodes;
+    pendingNodes = [];
+    for (const node of batch) {
+      findAndProcessUsernames(node);
+      findAndProcessVideoCards(node);
+    }
+  });
+}
+
 // 使用 MutationObserver 监视整个文档的动态变化（例如，评论的加载）
 const observer = new MutationObserver(mutations => {
   mutations.forEach(mutation => {
     if (mutation.addedNodes.length) {
-      // 修复：遍历所有新添加的节点，而不是它们的父节点
-      mutation.addedNodes.forEach(node => {
-        // 我们只关心元素节点
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          findAndProcessUsernames(node);
-          findAndProcessVideoCards(node);
-        }
-      });
+      scheduleProcessing(mutation.addedNodes);
     }
   });
 });
@@ -375,7 +415,7 @@ function findAndProcessVideoCards(container) {
       // 1b. 发起异步请求 (获取 Tags 或 UID)
       if (needFetchInfo && bvid && !card.dataset.tagCheckInitiated) {
         card.dataset.tagCheckInitiated = 'true';
-        fetchVideoInfo(bvid).then(res => {
+        fetchVideoInfoCached(bvid).then(res => {
           if (!card.isConnected || card.dataset.keywordProcessed) return;
 
           if (res && res.success) {
@@ -476,7 +516,7 @@ function createBlockButton(uid, bvid = null) {
   const init = () => {
     // 如果没有 UID 但有 BVID，先请求 API 获取 UID
     if (!uid && bvid) {
-      fetchVideoInfo(bvid).then(res => {
+      fetchVideoInfoCached(bvid).then(res => {
         if (res && res.success && res.data.mid) {
           uid = res.data.mid;
           button.dataset.uid = uid;
@@ -493,7 +533,7 @@ function createBlockButton(uid, bvid = null) {
 
   // 按需检查状态
   const checkStatus = () => {
-    checkBlockStatus(uid).then(response => {
+    checkBlockStatusCached(uid).then(response => {
       if (!button.isConnected) return; // 按钮可能已从 DOM 中移除
 
       button.disabled = false;
@@ -639,7 +679,7 @@ function showTooltip(targetElement, type, id) {
       });
     });
 
-    fetchUserInfo(id).then(res => {
+    fetchUserInfoCached(id).then(res => {
       if (!document.getElementById('ext-hover-tooltip')) return;
       if (res.success) {
         const d = res.data;
@@ -657,7 +697,7 @@ function showTooltip(targetElement, type, id) {
   } else if (type === 'user-resolve') {
     // 新增：先通过 BVID 获取 UID，再显示用户信息
     tooltip.innerHTML = '<div class="ext-loading">正在解析用户信息...</div>';
-    fetchVideoInfo(id).then(res => {
+    fetchVideoInfoCached(id).then(res => {
       if (res.success && res.data.mid) {
         // 获取成功，转为普通的 user 类型显示
         showTooltip(targetElement, 'user', res.data.mid);
@@ -666,7 +706,7 @@ function showTooltip(targetElement, type, id) {
       }
     });
   } else if (type === 'video') {
-    fetchVideoInfo(id).then(res => {
+    fetchVideoInfoCached(id).then(res => {
       if (!document.getElementById('ext-hover-tooltip')) return;
       if (res.success) {
         const d = res.data;
