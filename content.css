@@ -2,17 +2,24 @@
 
 /* 注入的“拉黑”小按钮 */
 .ext-block-button {
-  font-size: 12px;
-  padding: 0 4px;
+  font-size: 11px;
+  padding: 0 3px;
   margin-left: 8px;
   border: 1px solid #fb7299;
   background-color: #fff;
   color: #fb7299;
   border-radius: 3px;
   cursor: pointer;
-  line-height: 16px;
+  line-height: 14px;
   vertical-align: middle;
   z-index: 9998;
+  /* 防止被父级 flex/ellipsis 布局拉伸变宽（直播区/动态标题等容器） */
+  flex: none;
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: auto;
+  max-width: max-content;
+  white-space: nowrap;
 }
 .ext-block-button:hover {
   background-color: #fb7299;
