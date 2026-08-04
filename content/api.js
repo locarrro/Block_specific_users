@@ -150,9 +150,12 @@ async function checkBlockStatus(uid) {
 async function fetchFollowings(mid) {
   const list = [];
   const pageSize = 50;
+  const urlFor = pn => `https://api.bilibili.com/x/relation/followings?vmid=${mid}&pn=${pn}&ps=${pageSize}&order=attention&order_type=attention`;
   // 最多拉 8 页（400 人），足够覆盖绝大多数关注量
   for (let pn = 1; pn <= 8; pn++) {
-    const data = await apiGet(`https://api.bilibili.com/x/relation/followings?vmid=${mid}&pn=${pn}&ps=${pageSize}&order=attention`);
+    let data = await apiGet(urlFor(pn));
+    // 普通请求失败（风控或接口要求签名）时，用 wbi 签名请求重试一次
+    if (data.code !== 0) data = await apiGetWithWbi(urlFor(pn));
     if (data.code !== 0 || !data.data || !data.data.list) break;
     list.push(...data.data.list.map(u => ({ mid: String(u.mid), uname: u.uname })));
     if (!data.data.has_more || (data.data.total && list.length >= data.data.total)) break;

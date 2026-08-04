@@ -46,6 +46,11 @@ function getMyMid() {
     const match = link.href.match(/space\.bilibili\.com\/(\d+)/);
     if (match) cachedMyMid = match[1];
   }
+  // cookie 兜底：DedeUserID 是登录态标准字段，比顶栏 DOM 更可靠
+  if (!cachedMyMid) {
+    const cookie = document.cookie.match(/(?:^|;\s*)DedeUserID=(\d+)/);
+    if (cookie) cachedMyMid = cookie[1];
+  }
   return cachedMyMid || null;
 }
 
