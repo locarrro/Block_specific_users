@@ -146,6 +146,21 @@ async function checkBlockStatus(uid) {
   }
 }
 
+// 获取关注列表（翻页拉取，用于直播区按主播名解析 uid）
+async function fetchFollowings(mid) {
+  const list = [];
+  const pageSize = 50;
+  // 最多拉 8 页（400 人），足够覆盖绝大多数关注量
+  for (let pn = 1; pn <= 8; pn++) {
+    const data = await apiGet(`https://api.bilibili.com/x/relation/followings?vmid=${mid}&pn=${pn}&ps=${pageSize}&order=attention`);
+    if (data.code !== 0 || !data.data || !data.data.list) break;
+    list.push(...data.data.list.map(u => ({ mid: String(u.mid), uname: u.uname })));
+    if (!data.data.has_more || (data.data.total && list.length >= data.data.total)) break;
+  }
+  if (list.length === 0) return { success: false, error: '关注列表为空或获取失败' };
+  return { success: true, list };
+}
+
 // 通过房间号获取主播 uid（直播区拉黑按钮用）
 async function fetchRoomOwner(roomId) {
   const data = await apiGet(`https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}`);
@@ -435,3 +450,4 @@ const fetchUserInfoCached = cached(fetchUserInfo, 10 * 60 * 1000);
 const fetchVideoInfoCached = cached(fetchVideoInfo, 10 * 60 * 1000);
 const checkBlockStatusCached = cached(checkBlockStatus, 60 * 1000);
 const fetchRoomOwnerCached = cached(fetchRoomOwner, 10 * 60 * 1000);
+const fetchFollowingsCached = cached(fetchFollowings, 10 * 60 * 1000);

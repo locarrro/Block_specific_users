@@ -49,6 +49,46 @@ function getMyMid() {
   return cachedMyMid || null;
 }
 
+// 从页面"关注栏"DOM 提取 主播名 -> uid 映射（零请求）
+function buildFollowingsMapFromDom() {
+  const map = new Map();
+  document.querySelectorAll('.bili-dyn-up-list__item[biliscope-userid]').forEach(item => {
+    const nameEl = item.querySelector('.bili-dyn-up-list__item__name');
+    const uid = item.getAttribute('biliscope-userid');
+    if (nameEl && uid) map.set(nameEl.textContent.trim(), uid);
+  });
+  return map;
+}
+
+// 直播区主播名 -> uid：先查页面关注栏 DOM（零请求），再查关注列表 API 兜底
+async function resolveLiveUid(name) {
+  const domMap = buildFollowingsMapFromDom();
+  if (domMap.has(name)) return domMap.get(name);
+
+  const myMid = getMyMid();
+  if (!myMid) return null;
+  const res = await fetchFollowingsCached(myMid);
+  if (res && res.success) {
+    const hit = res.list.find(u => u.uname === name);
+    if (hit) return hit.mid;
+  }
+  return null;
+}
+
+// 修复父容器 overflow:hidden 导致按钮被裁剪的问题
+function fixButtonOverflowParent(link) {
+  const parent = link.parentElement;
+  if (!parent) return;
+  const style = window.getComputedStyle(parent);
+  if (parent.classList.contains('up-name') || style.overflow === 'hidden') {
+    parent.style.overflow = 'visible';
+    if (style.display === 'block') {
+      parent.style.display = 'inline-flex';
+      parent.style.alignItems = 'center';
+    }
+  }
+}
+
 // MutationObserver 节流：收集新增元素节点，用 requestAnimationFrame 批量处理，
 // 避免高频滚动加载时对每个节点立即执行全量扫描
 let pendingNodes = [];
@@ -100,7 +140,7 @@ window.addEventListener('load', () => {
 function findAndProcessUsernames(container) {
   // 查找指向用户空间的链接，这是最可靠的方式
   // 扩展选择器：覆盖热门/排行榜 (.up-name a), 动态 (.bili-dyn-card-user__name) 等特定结构
-  const selector = 'a[href*="space.bilibili.com"], a[href*="live.bilibili.com"], .up-name a, .bili-dyn-card-user__name, .user-name a, .up-name__text, .bili-dyn-title__text';
+  const selector = 'a[href*="space.bilibili.com"], a[href*="live.bilibili.com"], .up-name a, .bili-dyn-card-user__name, .user-name a, .up-name__text, .bili-dyn-title__text, .bili-dyn-live-users__item__uname';
   let userLinks = container.querySelectorAll ? Array.from(container.querySelectorAll(selector)) : [];
 
   // 修复：如果 container 本身就是目标链接 (MutationObserver 可能会直接传入该节点)
@@ -132,6 +172,11 @@ function findAndProcessUsernames(container) {
       if (match) uid = match[1];
     }
 
+    // 1b. B 站数据属性 biliscope-userid（动态流用户名 span、头像等无 href 场景）
+    if (!uid && link.getAttribute && link.getAttribute('biliscope-userid')) {
+      uid = link.getAttribute('biliscope-userid');
+    }
+
     // 2. 如果没有 UID (例如纯文本名字)，尝试从上下文卡片中获取 BVID
     if (!uid) {
       const card = link.closest('.video-card, .bili-video-card, .video-item, .small-item, .rank-item, .bili-dyn-list__item, .bili-video-card__wrap');
@@ -150,11 +195,25 @@ function findAndProcessUsernames(container) {
       if (match) roomId = match[1];
     }
 
+    // 4. 直播区条目（t.bilibili.com 侧栏）：主播名是 div 而非链接，需异步按名字解析 uid
+    if (!uid && !bvid && !roomId && link.matches && link.matches('.bili-dyn-live-users__item__uname')) {
+      const name = link.textContent.trim();
+      if (!name) return;
+      resolveLiveUid(name).then(mid => {
+        if (!mid || !link.isConnected) return;
+        const button = createBlockButton(mid);
+        link.insertAdjacentElement('afterend', button);
+        fixButtonOverflowParent(link);
+        setupHoverTrigger(link, 'user', mid);
+      });
+      return; // 直播条目不走下方同步渲染分支
+    }
+
     // 排除当前登录用户本人的链接（从顶栏用户入口读取 mid 作兜底）
     const myMid = getMyMid();
     if (myMid && uid === myMid) return;
 
-    // 4. 根据获取到的信息渲染按钮
+    // 5. 根据获取到的信息渲染按钮
     if (uid || bvid || roomId) {
       // 如果有 UID 直接创建，如果没有 UID 但有 BVID，则创建“延迟加载”按钮
       const button = createBlockButton(uid, bvid, roomId);
@@ -163,17 +222,7 @@ function findAndProcessUsernames(container) {
       link.insertAdjacentElement('afterend', button);
 
       // 样式修复：针对热门/排行榜等页面，父容器可能有 overflow: hidden 导致按钮不可见
-      const parent = link.parentElement;
-      if (parent) {
-        const style = window.getComputedStyle(parent);
-        if (parent.classList.contains('up-name') || style.overflow === 'hidden') {
-          parent.style.overflow = 'visible';
-          if (style.display === 'block') {
-             parent.style.display = 'inline-flex';
-             parent.style.alignItems = 'center';
-          }
-        }
-      }
+      fixButtonOverflowParent(link);
 
       // 添加悬停显示用户信息功能（直播区无 space 链接，不挂悬停）
       if (uid) {
