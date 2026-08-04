@@ -156,6 +156,10 @@ observer.observe(document.body, {
   subtree: true
 });
 
+// 清理直播间"我的关注"面板内可能残留的孤儿按钮
+// （Vue 虚拟滚动重渲染时会移除主播 <a> 但留下扩展插入的 <button>，累积成乱码）
+document.querySelectorAll('[class*="follow-cntr"] .ext-block-button').forEach(b => b.remove());
+
 // 立即对页面进行初次处理
 findAndProcessUsernames(document.body);
 findAndProcessVideoCards(document.body);
@@ -184,8 +188,8 @@ function findAndProcessUsernames(container) {
     link.dataset.blockButtonAdded = 'true';
 
     // 排除顶栏/动态页左侧本人卡片区域 (防止对自己账号进行操作)，
-    // 以及直播间"我的关注"面板（Vue 列表窄容器内插按钮会渲染异常）
-    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header, .bili-dyn-sidebar__user, [class*="my-follow"]')) return;
+    // 以及直播间"我的关注"面板 .follow-cntr（Vue 滚动列表，插入按钮会渲染异常/残留）
+    if (link.closest('.bili-header, .mini-header, #international-header, .z-top-nav, .v-header, .bili-dyn-sidebar__user, [class*="my-follow"], [class*="follow-cntr"]')) return;
 
     // 排除"关注/粉丝/动态"统计链接（href 带子路径，非用户名）
     if (link.href && /space\.bilibili\.com\/\d+\/[\w-]+/.test(link.href)) return;

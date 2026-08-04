@@ -87,8 +87,7 @@ function createBlockButton(uid, bvid = null, roomId = null) {
           button.dataset.uid = uid;
           checkStatus(); // 获取到 UID 后再检查状态
         } else {
-          button.innerText = '?';
-          button.title = '无法获取用户信息';
+          button.remove(); // 解析不出 UID 直接移除按钮，不留乱码占位
         }
       });
     } else if (!uid && roomId) {
@@ -99,8 +98,7 @@ function createBlockButton(uid, bvid = null, roomId = null) {
           button.dataset.uid = uid;
           checkStatus(); // 获取到 UID 后再检查状态
         } else {
-          button.innerText = '?';
-          button.title = '无法获取用户信息';
+          button.remove(); // 解析不出 UID 直接移除按钮，不留乱码占位
         }
       });
     } else if (uid) {
