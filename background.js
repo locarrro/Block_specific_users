@@ -1,17 +1,20 @@
 // ============================================================
 // Bilibili 黑名单增强助手 - background service worker
-// 职责已大幅精简：页面内的 API 调用（用户信息、视频信息、
-// 拉黑/解除、状态检查）均由 content script 在页面上下文直连，
-// 不再需要 executeScript 注入。这里只保留 popup 场景使用的
-// 黑名单列表读取（GET 请求，直连带 cookie 即可）。
+// 页面内的 API 调用（用户信息、视频信息、拉黑/解除、状态检查）
+// 均由 content script 在页面上下文直连，这里仅保留 popup 场景
+// 使用的黑名单列表读取，并以路由表分发消息。
 // ============================================================
 
+// 消息路由表：type -> handler(request, sender) => Promise<response>
+const handlers = {
+  getBlacklist: fetchBlacklist,
+};
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // 使用 return true 表示我们将异步地发送响应
-  if (request.type === 'getBlacklist') {
-    fetchBlacklist().then(sendResponse);
-    return true;
-  }
+  const handler = handlers[request.type];
+  if (!handler) return; // 未知消息类型不响应
+  handler(request, sender).then(sendResponse);
+  return true; // 异步响应
 });
 
 // 获取黑名单列表
