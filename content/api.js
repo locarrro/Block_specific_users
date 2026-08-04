@@ -53,9 +53,8 @@ async function fetchUserInfo(uid) {
     const avgLength = videoList.length > 0 ? Math.round(totalLength / videoList.length) : 0;
     avgLengthStr = formatDuration(avgLength);
 
-    // 生成词云数据
-    const allText = videoList.map(v => `${v.title} ${v.description} ${v.tname}`).join(' ');
-    wordCloud = generateWordCloud(allText).slice(0, 15);
+    // 生成词云数据（参照 BiliScope：标题×3 + 描述×1 加权，Intl.Segmenter 分词）
+    wordCloud = generateWordCloud(videoList);
   }
 
   return {
@@ -192,23 +191,82 @@ function formatDuration(seconds) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// 简单的词云生成逻辑
-function generateWordCloud(text) {
-  const stopWords = new Set(['的', '了', '是', '在', '我', '你', '他', '她', '们', '一个', '这个', '那个', '和', '与', '或', '但', '也', '都', '就', '【', '】', '|', '-', 'bilibili', '哔哩哔哩']);
-  const wordCounts = {};
+// --- 词云生成（参照 BiliScope 实现：标题×3 + 描述×1 加权，Intl.Segmenter 分词） ---
 
-  // 使用正则表达式匹配中文字符和字母数字
-  const words = text.match(/[\u4e00-\u9fa5a-zA-Z0-9]+/g) || [];
+// B 站通用词（整词删除）与标准中文停用词（过滤）
+// SINGLE_STOP：仅用于剔除 bigram 补充词中含停用单字的垃圾组合（如“的学”“们大”），
+// 不影响 Intl.Segmenter 识别出的完整词（如“目的”里的“的”是声旁，应保留）
+const BILI_IGNORE_WORDS = new Set(['视频', '关注', '点赞', '投币', '收藏', '三连', '转发', '直播', '动态', '投稿', '更新', 'bilibili', '哔哩哔哩']);
+const SINGLE_STOP = new Set(['的', '了', '是', '在', '我', '你', '他', '她', '它', '们', '这', '那', '哪', '和', '与', '或', '但', '也', '都', '就', '很', '会', '能', '要', '让', '被', '把', '给', '从', '对', '还', '又', '再', '更', '最', '第', '不', '没', '有', '上', '下', '中', '大', '小', '新', '老', '好', '看', '说', '做', '去', '来', '用', '想', '觉', '得', '过', '到', '后', '个', '种', '样', '些', '点', '里', '时', '年', '月', '日', '天', '人', '之', '于', '其', '者', '所', '而', '即', '则', '虽', '然', '因', '为', '么', '哪', '呢', '吗', '啊', '吧', '哦']);
+const STOP_WORDS = new Set([
+  ...SINGLE_STOP,
+  '什么', '怎么', '为什么', '一个', '这个', '那个', '自己', '大家', '现在', '今天', '一起', '还有', '以及', '因为', '所以', '如果', '然后', '真的', '已经', '可以',
+  '我们', '你们', '他们', '她们', '它们', '咱们', '的话', '一下', '一些', '东西', '这里', '那里', '没有', '不是', '就是'
+]);
 
-  words.forEach(word => {
-    if (word.length > 1 && !stopWords.has(word.toLowerCase())) {
-      wordCounts[word] = (wordCounts[word] || 0) + 1;
-    }
+// 清洗文本：剔除 URL / 日期 / av号 / bv号 等噪音
+function cleanWordCloudText(text) {
+  return String(text || '')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\d{4}[-./]\d{1,2}[-./]\d{1,2}/g, ' ')
+    .replace(/[aA][vV]\d+/g, ' ')
+    .replace(/[bB][vV]1[1-9a-km-zA-HJ-NP-Z]{9}/g, ' ');
+}
+
+// 分词：优先 Intl.Segmenter（浏览器原生），不可用时回退字符块切分
+function segmentWords(text) {
+  try {
+    return Array.from(new Intl.Segmenter('cn', { granularity: 'word' }).segment(text))
+      .filter(seg => seg.isWordLike)
+      .map(seg => seg.segment);
+  } catch (e) {
+    return text.match(/[\u4e00-\u9fa5a-zA-Z0-9]+/g) || [];
+  }
+}
+
+// 对连续中文块生成 2-gram 滑窗，作为 Intl.Segmenter 词典未覆盖词的兜底
+// （如“现代海洋牧场”ICU 若只切成单字，bigram 能补出“海洋”“牧场”）
+function bigramOfChinese(text) {
+  const grams = [];
+  const chunks = text.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+  chunks.forEach(chunk => {
+    for (let i = 0; i < chunk.length - 1; i++) grams.push(chunk.slice(i, i + 2));
+  });
+  return grams;
+}
+
+// 从投稿列表生成词云：标题权重 3、描述权重 1，停用词/通用词过滤，按频次降序取前 15
+function generateWordCloud(videos) {
+  const counts = new Map();
+  const countWord = (word, weight) => {
+    const w = word.toLowerCase();
+    if (word.length < 2 || STOP_WORDS.has(w) || BILI_IGNORE_WORDS.has(w) || /^\d+$/.test(w)) return;
+    counts.set(word, (counts.get(word) || 0) + weight);
+  };
+  const addText = (text, weight) => {
+    const cleaned = cleanWordCloudText(text);
+    let t = cleaned;
+    BILI_IGNORE_WORDS.forEach(w => { t = t.split(w).join(' '); });
+    // 以 Intl.Segmenter 分词为主（保留真实重复），bigram 仅补充分词未覆盖的词
+    const segWords = segmentWords(t);
+    const segLower = new Set(segWords.map(w => w.toLowerCase()));
+    segWords.forEach(word => countWord(word, weight));
+    bigramOfChinese(t).forEach(gram => {
+      if (segLower.has(gram.toLowerCase())) return; // 分词已覆盖，跳过避免重复计数
+      if (gram.split('').some(ch => SINGLE_STOP.has(ch))) return; // 剔除含停用字的垃圾组合
+      countWord(gram, weight);
+    });
+  };
+
+  (videos || []).forEach(v => {
+    if (v.title) addText(v.title, 3);
+    if (v.description) addText(v.description, 1);
   });
 
-  return Object.entries(wordCounts)
-    .sort((a, b) => b[1] - a[1])
-    .map(entry => ({ word: entry[0], count: entry[1] }));
+  return Array.from(counts.entries())
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word))
+    .slice(0, 15);
 }
 
 // --- wbi 签名（B 站公开算法） ---
