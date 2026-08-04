@@ -161,6 +161,16 @@ async function fetchFollowings(mid) {
   return { success: true, list };
 }
 
+// 通过 B 站用户搜索接口按名字解析 uid（直播区最终兜底，wbi 签名请求）
+async function searchUidByName(name) {
+  const data = await apiGetWithWbi(`https://api.bilibili.com/x/web-interface/search/type?search_type=bili_user&keyword=${encodeURIComponent(name)}`);
+  if (data.code === 0 && data.data && Array.isArray(data.data.result)) {
+    const hit = data.data.result.find(u => u.uname === name);
+    if (hit) return { success: true, uid: String(hit.mid) };
+  }
+  return { success: false, error: data.message || '未找到该用户' };
+}
+
 // 通过房间号获取主播 uid（直播区拉黑按钮用）
 async function fetchRoomOwner(roomId) {
   const data = await apiGet(`https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}`);
@@ -451,3 +461,4 @@ const fetchVideoInfoCached = cached(fetchVideoInfo, 10 * 60 * 1000);
 const checkBlockStatusCached = cached(checkBlockStatus, 60 * 1000);
 const fetchRoomOwnerCached = cached(fetchRoomOwner, 10 * 60 * 1000);
 const fetchFollowingsCached = cached(fetchFollowings, 10 * 60 * 1000);
+const searchUidByNameCached = cached(searchUidByName, 24 * 60 * 60 * 1000);

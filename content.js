@@ -60,19 +60,44 @@ function buildFollowingsMapFromDom() {
   return map;
 }
 
-// 直播区主播名 -> uid：先查页面关注栏 DOM（零请求），再查关注列表 API 兜底
+// 通用并发限制器：同时最多执行 max 个异步任务（降低批量请求触发风控的概率）
+function createConcurrencyLimiter(max) {
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active < max && queue.length) queue.shift()();
+  };
+  return fn => (...args) => new Promise((resolve, reject) => {
+    const run = () => {
+      active++;
+      Promise.resolve(fn(...args)).then(
+        v => { active--; next(); resolve(v); },
+        e => { active--; next(); reject(e); }
+      );
+    };
+    if (active < max) run();
+    else queue.push(run);
+  });
+}
+const limitedSearchUidByName = createConcurrencyLimiter(3)(searchUidByNameCached);
+
+// 直播区主播名 -> uid：关注栏 DOM（零请求）→ 关注列表 API → 用户搜索接口
 async function resolveLiveUid(name) {
   const domMap = buildFollowingsMapFromDom();
   if (domMap.has(name)) return domMap.get(name);
 
   const myMid = getMyMid();
-  if (!myMid) return null;
-  const res = await fetchFollowingsCached(myMid);
-  if (res && res.success) {
-    const hit = res.list.find(u => u.uname === name);
-    if (hit) return hit.mid;
+  if (myMid) {
+    const res = await fetchFollowingsCached(myMid);
+    if (res && res.success) {
+      const hit = res.list.find(u => u.uname === name);
+      if (hit) return hit.mid;
+    }
   }
-  return null;
+
+  // 最后兜底：B 站用户搜索接口按名字解析（限并发 3）
+  const searchRes = await limitedSearchUidByName(name);
+  return searchRes && searchRes.success ? searchRes.uid : null;
 }
 
 // 修复父容器 overflow:hidden 导致按钮被裁剪的问题
@@ -175,6 +200,20 @@ function findAndProcessUsernames(container) {
     // 1b. B 站数据属性 biliscope-userid（动态流用户名 span、头像等无 href 场景）
     if (!uid && link.getAttribute && link.getAttribute('biliscope-userid')) {
       uid = link.getAttribute('biliscope-userid');
+    }
+
+    // 1c. 从所在动态卡片的头像数据属性取 uid（bilisponsor-userid / biliscope-userid），
+    //     覆盖纯文字/专栏/直播预告等无视频链接的动态
+    if (!uid) {
+      const card = link.closest('.bili-dyn-item, .bili-dyn-list__item');
+      if (card) {
+        const sponsor = card.querySelector('[bilisponsor-userid]');
+        if (sponsor) uid = sponsor.getAttribute('bilisponsor-userid');
+        if (!uid) {
+          const scope = card.querySelector('[biliscope-userid]');
+          if (scope) uid = scope.getAttribute('biliscope-userid');
+        }
+      }
     }
 
     // 2. 如果没有 UID (例如纯文本名字)，尝试从上下文卡片中获取 BVID
